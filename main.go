@@ -19,6 +19,7 @@ type settings struct {
 	debug          bool
 	awsProfileName string
 	outputFileName string
+	maxWorkers     int
 }
 
 // application stores main program global dependencies
@@ -33,6 +34,7 @@ func main() {
 	flag.BoolVar(&stg.debug, "debug", false, "Debug mode. Shows debug logs")
 	flag.StringVar(&stg.awsProfileName, "aws-profile", "default", "AWS Profile Name")
 	flag.StringVar(&stg.outputFileName, "out-name", "lambda-list.csv", "The name of the output file")
+	flag.IntVar(&stg.maxWorkers, "max-workers", 50, "Maximum number of workers")
 	flag.Parse()
 
 	logger := createLogger(stg.debug)
@@ -53,7 +55,7 @@ func main() {
 		cwlogsClient: cloudwatchlogs.NewFromConfig(cfg),
 	}
 
-	lambdaFunctionsDetailsList, err := app.getAllLambdaFunctionsDetailsList()
+	lambdaFunctionsList, err := app.getAllLambdaFunctionsDetails()
 	if err != nil {
 		logger.Fatalw("error when listing lambda function details",
 			zap.Error(err),
@@ -61,7 +63,7 @@ func main() {
 	}
 
 	wg := &sync.WaitGroup{}
-	app.getAllLambdaFunctionsLastInvokeTimeBackground(lambdaFunctionsDetailsList, wg)
+	app.getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList, wg, stg.maxWorkers)
 	wg.Wait()
 
 	logger.Infof("writing the output to %q", stg.outputFileName)
@@ -76,7 +78,7 @@ func main() {
 	w := csv.NewWriter(f)
 	defer w.Flush()
 
-	titles := lambdaFunctionsDetailsList[0].getTitleFields()
+	titles := lambdaFunctionsList[0].getTitleFields()
 	err = w.Write(titles)
 	if err != nil {
 		logger.Errorw("error when writing title",
@@ -84,8 +86,17 @@ func main() {
 		)
 	}
 
-	for _, lambdaDetails := range lambdaFunctionsDetailsList {
-		record := []string{lambdaDetails.Name, lambdaDetails.Arn, lambdaDetails.Description, lambdaDetails.LastModified, lambdaDetails.IamRole, lambdaDetails.Runtime, lambdaDetails.LastInvoked}
+	for _, lambdaDetails := range lambdaFunctionsList {
+		record := []string{
+			lambdaDetails.Name,
+			lambdaDetails.Arn,
+			lambdaDetails.Description,
+			lambdaDetails.LastModified,
+			lambdaDetails.IamRole,
+			lambdaDetails.Runtime,
+			lambdaDetails.LastInvoked,
+		}
+
 		err := w.Write(record)
 		if err != nil {
 			logger.Errorw("error when writing the entry",
@@ -97,24 +108,24 @@ func main() {
 
 	logger.Infow("all the function details have been written to the output",
 		zap.String("file name", stg.outputFileName),
-		zap.Int("number of functions", len(lambdaFunctionsDetailsList)),
+		zap.Int("number of functions", len(lambdaFunctionsList)),
 	)
 }
 
-func createLogger(isDebug bool) *zap.SugaredLogger {
+func createLogger(debugMode bool) *zap.SugaredLogger {
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
 	level := zap.NewAtomicLevelAt(zap.InfoLevel)
-	if isDebug {
+	if debugMode {
 		level = zap.NewAtomicLevelAt(zap.DebugLevel)
 	}
 
 	config := zap.Config{
 		Level:             level,
 		Development:       false,
-		DisableCaller:     !isDebug, // disable caller if log level is not debug
-		DisableStacktrace: !isDebug, // disable stack trace if log level is not debug
+		DisableCaller:     !debugMode, // disable caller if log level is not debug
+		DisableStacktrace: !debugMode, // disable stack trace if log level is not debug
 		Encoding:          "console",
 		EncoderConfig:     encoderConfig,
 		OutputPaths: []string{

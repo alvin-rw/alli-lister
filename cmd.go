@@ -16,18 +16,27 @@ import (
 	"go.uber.org/zap"
 )
 
+// job contains the required information for a worker goroutines
+// to be able to query the Lambda function last invocation time
+// and writes the result back to the Lambda function slice
+type job struct {
+	functionName string
+	index        int
+}
+
 const (
 	lambdaLogGroupPrefix = "/aws/lambda/"
 
 	cloudWatchLogGroupDoesNotExistErrorMessage = "The specified log group does not exist"
 )
 
-// getAllLambdaFunctionsDetailsList lists all Lambda functions in the AWS Account in the current region
-func (app *application) getAllLambdaFunctionsDetailsList() ([]lambdaFunctionDetails, error) {
+// getAllLambdaFunctionsDetails returns slice containing the details of all
+// Lambda functions in the current region
+func (app *application) getAllLambdaFunctionsDetails() ([]lambdaFunction, error) {
 	app.logger.Info("getting function details for all lambda functions")
 
 	in := &lambda.ListFunctionsInput{}
-	var lambdaFunctionsDetailsList []lambdaFunctionDetails
+	var lambdaFunctionsList []lambdaFunction
 
 	for {
 		out, err := app.lambdaClient.ListFunctions(context.Background(), in)
@@ -36,7 +45,7 @@ func (app *application) getAllLambdaFunctionsDetailsList() ([]lambdaFunctionDeta
 		}
 
 		for _, functionDetail := range out.Functions {
-			f := lambdaFunctionDetails{
+			f := lambdaFunction{
 				Name:         *functionDetail.FunctionName,
 				Arn:          *functionDetail.FunctionArn,
 				Description:  *functionDetail.Description,
@@ -45,7 +54,7 @@ func (app *application) getAllLambdaFunctionsDetailsList() ([]lambdaFunctionDeta
 				Runtime:      string(functionDetail.Runtime),
 			}
 
-			lambdaFunctionsDetailsList = append(lambdaFunctionsDetailsList, f)
+			lambdaFunctionsList = append(lambdaFunctionsList, f)
 		}
 
 		if out.NextMarker != nil {
@@ -57,68 +66,88 @@ func (app *application) getAllLambdaFunctionsDetailsList() ([]lambdaFunctionDeta
 	}
 
 	app.logger.Infow("got all lambda function details",
-		zap.Int("function_count", len(lambdaFunctionsDetailsList)),
+		zap.Int("function_count", len(lambdaFunctionsList)),
 	)
 
-	return lambdaFunctionsDetailsList, nil
+	return lambdaFunctionsList, nil
 }
 
-func (app *application) getAllLambdaFunctionsLastInvokeTimeBackground(outputlist []lambdaFunctionDetails, wg *sync.WaitGroup) {
+// getAllLambdaFunctionsLastInvokeTime wraps getLambdaFunctionLastInvokeTime and invoke them concurrently in the background.
+func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList []lambdaFunction, wg *sync.WaitGroup, maxWorkers int) {
 	app.logger.Info("getting last invoke time for all lambda functions")
 
-	for i, lambdaDetails := range outputlist {
+	// jobs channel is used to limit the number of workers goroutines
+	// by limiting the amount of jobs that can be stored in the channel
+	jobs := make(chan job, maxWorkers)
+
+	for i, lambdaDetails := range lambdaFunctionsList {
+		currentJob := job{
+			functionName: lambdaDetails.Name,
+			index:        i,
+		}
+
+		jobs <- currentJob
 		wg.Add(1)
-		go app.getLambdaFunctionLastInvokeTimeBackground(lambdaDetails.Name, i, outputlist, wg)
+		go app.getLambdaFunctionLastInvokeTime(jobs, lambdaFunctionsList, wg)
 	}
+	close(jobs)
 }
 
-func (app *application) getLambdaFunctionLastInvokeTimeBackground(functionName string, index int, outputList []lambdaFunctionDetails, wg *sync.WaitGroup) {
+// getLambdaFunctionLastInvokeTime queries CloudWatch logs to retrieve the latest log timestamp
+// of the Lambda function which name is obtained from jobs channel
+// and write the output in the lambdaFunctionsList slice. If there's an error when describing the
+// CloudWatch log group and log stream, the resulting last invocation timestamp is "-"
+func (app *application) getLambdaFunctionLastInvokeTime(jobs <-chan job, lambdaFunctionsList []lambdaFunction, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	logGroupName := fmt.Sprintf("%s%s", lambdaLogGroupPrefix, functionName)
+	time.Sleep(10 * time.Second)
 
-	input := &cloudwatchlogs.DescribeLogStreamsInput{
-		LogGroupName: aws.String(logGroupName),
-		Descending:   aws.Bool(false),
-		Limit:        aws.Int32(1),
-		OrderBy:      types.OrderByLastEventTime,
-	}
+	for currentJob := range jobs {
+		logGroupName := fmt.Sprintf("%s%s", lambdaLogGroupPrefix, currentJob.functionName)
 
-	out, err := app.cwlogsClient.DescribeLogStreams(context.Background(), input)
-	if err != nil {
-		var oe *smithy.OperationError
-		if errors.As(err, &oe) {
-			if oe.Operation() == "DescribeLogStreams" && strings.Contains(oe.Unwrap().Error(), cloudWatchLogGroupDoesNotExistErrorMessage) {
-				app.logger.Debugw("CloudWatch log group does not exist for lambda function",
-					zap.String("function_name", functionName),
-				)
-
-				outputList[index].LastInvoked = "-"
-			}
-		} else {
-			app.logger.Debugw("error when describing log stream",
-				zap.String("log group name", logGroupName),
-				zap.Error(err),
-			)
+		input := &cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName: aws.String(logGroupName),
+			Descending:   aws.Bool(false),
+			Limit:        aws.Int32(1),
+			OrderBy:      types.OrderByLastEventTime,
 		}
-	} else if len(out.LogStreams) == 0 {
-		app.logger.Debugw("no log stream exists for lambda function",
-			zap.String("function_name", functionName),
-		)
 
-		outputList[index].LastInvoked = "-"
-	} else {
-		if out != nil && out.LogStreams != nil && out.LogStreams[0].LastEventTimestamp != nil {
-			lastEventTimestampInSeconds := *out.LogStreams[0].LastEventTimestamp / 1000
-			t := time.Unix(lastEventTimestampInSeconds, 0)
+		out, err := app.cwlogsClient.DescribeLogStreams(context.Background(), input)
+		if err != nil {
+			var oe *smithy.OperationError
+			if errors.As(err, &oe) {
+				if oe.Operation() == "DescribeLogStreams" && strings.Contains(oe.Unwrap().Error(), cloudWatchLogGroupDoesNotExistErrorMessage) {
+					app.logger.Debugw("CloudWatch log group does not exist for lambda function",
+						zap.String("function_name", currentJob.functionName),
+					)
 
-			outputList[index].LastInvoked = t.Format("2006-01-02T15:04:05-07:00")
-			app.logger.Debugw("last invoke time info",
-				zap.Int64("*out.LogStreams[0].LastEventTimestamp", *out.LogStreams[0].LastEventTimestamp/1000),
-				zap.Int64("lastEventTimestampInSeconds", lastEventTimestampInSeconds),
-				zap.String("formatted time", t.Format("2006-01-02T15:04:05-07:00")),
-				zap.String("outputList[index].lastInvoked", outputList[index].LastInvoked),
+					lambdaFunctionsList[currentJob.index].LastInvoked = "-"
+				}
+			} else {
+				app.logger.Debugw("error when describing log stream",
+					zap.String("log group name", logGroupName),
+					zap.Error(err),
+				)
+			}
+		} else if len(out.LogStreams) == 0 {
+			app.logger.Debugw("no log stream exists for lambda function",
+				zap.String("function_name", currentJob.functionName),
 			)
+
+			lambdaFunctionsList[currentJob.index].LastInvoked = "-"
+		} else {
+			if out != nil && out.LogStreams != nil && out.LogStreams[0].LastEventTimestamp != nil {
+				lastEventTimestampInSeconds := *out.LogStreams[0].LastEventTimestamp / 1000
+				t := time.Unix(lastEventTimestampInSeconds, 0)
+
+				lambdaFunctionsList[currentJob.index].LastInvoked = t.Format("2006-01-02T15:04:05-07:00")
+				app.logger.Debugw("last invoke time info",
+					zap.Int64("*out.LogStreams[0].LastEventTimestamp", *out.LogStreams[0].LastEventTimestamp/1000),
+					zap.Int64("lastEventTimestampInSeconds", lastEventTimestampInSeconds),
+					zap.String("formatted time", t.Format("2006-01-02T15:04:05-07:00")),
+					zap.String("lambdaFunctionsList[index].lastInvoked", lambdaFunctionsList[currentJob.index].LastInvoked),
+				)
+			}
 		}
 	}
 }
