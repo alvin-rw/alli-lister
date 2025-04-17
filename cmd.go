@@ -31,37 +31,41 @@ const (
 )
 
 // getAllLambdaFunctionsDetails returns slice containing the details of all
-// Lambda functions in the current region
-func (app *application) getAllLambdaFunctionsDetails() ([]lambdaFunction, error) {
-	app.logger.Info("getting function details for all lambda functions")
+// Lambda functions in the region specified by regions parameter
+func (app *application) getAllLambdaFunctionsDetails(regions []string) ([]lambdaFunction, error) {
+	app.logger.Info("getting function details for all lambda functions",
+		zap.Strings("regions", regions),
+	)
 
-	in := &lambda.ListFunctionsInput{}
 	var lambdaFunctionsList []lambdaFunction
+	for _, region := range regions {
+		in := &lambda.ListFunctionsInput{}
 
-	for {
-		out, err := app.lambdaClient.ListFunctions(context.Background(), in)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, functionDetail := range out.Functions {
-			f := lambdaFunction{
-				Name:         *functionDetail.FunctionName,
-				Arn:          *functionDetail.FunctionArn,
-				Description:  *functionDetail.Description,
-				LastModified: *functionDetail.LastModified,
-				IamRole:      *functionDetail.Role,
-				Runtime:      string(functionDetail.Runtime),
+		for {
+			out, err := app.lambdaClient.ListFunctions(context.Background(), in)
+			if err != nil {
+				return nil, err
 			}
 
-			lambdaFunctionsList = append(lambdaFunctionsList, f)
-		}
+			for _, functionDetail := range out.Functions {
+				f := lambdaFunction{
+					Name:         *functionDetail.FunctionName,
+					Arn:          *functionDetail.FunctionArn,
+					Description:  *functionDetail.Description,
+					LastModified: *functionDetail.LastModified,
+					IamRole:      *functionDetail.Role,
+					Runtime:      string(functionDetail.Runtime),
+				}
 
-		if out.NextMarker != nil {
-			in.Marker = out.NextMarker
-			continue
-		} else {
-			break
+				lambdaFunctionsList = append(lambdaFunctionsList, f)
+			}
+
+			if out.NextMarker != nil {
+				in.Marker = out.NextMarker
+				continue
+			} else {
+				break
+			}
 		}
 	}
 

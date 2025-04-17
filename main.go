@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
 	"flag"
-	"os"
-	"sync"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
@@ -36,7 +34,7 @@ func main() {
 	var stg settings
 	flag.BoolVar(&stg.debug, "debug", false, "Debug mode. Shows debug logs")
 	flag.StringVar(&stg.awsProfileName, "aws-profile", "default", "AWS Profile Name")
-	flag.BoolVar(&stg.getAllRegions, "all-regions", false, "Whether to get data from all AWS Regions")
+	flag.BoolVar(&stg.getAllRegions, "all-regions", true, "Whether to get data from all AWS Regions")
 	flag.StringVar(&stg.outputFileName, "out-name", "lambda-list.csv", "The name of the output file")
 	flag.IntVar(&stg.maxWorkers, "max-workers", 50, "Maximum number of workers")
 	flag.Parse()
@@ -54,67 +52,85 @@ func main() {
 	}
 
 	app := &application{
-		logger:       logger,
-		ec2Client:    ec2.NewFromConfig(cfg),
-		lambdaClient: lambda.NewFromConfig(cfg),
-		cwlogsClient: cloudwatchlogs.NewFromConfig(cfg),
+		logger:    logger,
+		ec2Client: ec2.NewFromConfig(cfg),
 	}
 
-	lambdaFunctionsList, err := app.getAllLambdaFunctionsDetails()
+	regions := []string{}
+	if stg.getAllRegions {
+		regions, err = app.getAllOptedInRegions()
+		if err != nil {
+			app.logger.Fatalf("error when listing all available regions",
+				zap.Error(err),
+			)
+		}
+	} else {
+		regions = append(regions, cfg.Region)
+	}
+
+	lambdaClients := []*lambda.Client{}
+	cloudWatchClients := []*cloudwatchlogs.Client{}
+	for _, region := range regions {
+		lambdaClient := lambda.NewFromConfig(cfg, config.WithRegion(region))
+	}
+
+	lambdaFunctionsList, err := app.getAllLambdaFunctionsDetails(regions)
 	if err != nil {
 		logger.Fatalw("error when listing lambda function details",
 			zap.Error(err),
 		)
 	}
 
-	wg := &sync.WaitGroup{}
-	app.getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList, wg, stg.maxWorkers)
-	wg.Wait()
+	fmt.Println(lambdaFunctionsList)
 
-	logger.Infof("writing the output to %q", stg.outputFileName)
-	f, err := os.Create(stg.outputFileName)
-	if err != nil {
-		logger.Errorw("error when creating a file",
-			zap.Error(err),
-		)
-	}
-	defer f.Close()
+	// wg := &sync.WaitGroup{}
+	// app.getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList, wg, stg.maxWorkers)
+	// wg.Wait()
 
-	w := csv.NewWriter(f)
-	defer w.Flush()
+	// logger.Infof("writing the output to %q", stg.outputFileName)
+	// f, err := os.Create(stg.outputFileName)
+	// if err != nil {
+	// 	logger.Errorw("error when creating a file",
+	// 		zap.Error(err),
+	// 	)
+	// }
+	// defer f.Close()
 
-	titles := lambdaFunctionsList[0].getTitleFields()
-	err = w.Write(titles)
-	if err != nil {
-		logger.Errorw("error when writing title",
-			zap.Error(err),
-		)
-	}
+	// w := csv.NewWriter(f)
+	// defer w.Flush()
 
-	for _, lambdaDetails := range lambdaFunctionsList {
-		record := []string{
-			lambdaDetails.Name,
-			lambdaDetails.Arn,
-			lambdaDetails.Description,
-			lambdaDetails.LastModified,
-			lambdaDetails.IamRole,
-			lambdaDetails.Runtime,
-			lambdaDetails.LastInvoked,
-		}
+	// titles := lambdaFunctionsList[0].getTitleFields()
+	// err = w.Write(titles)
+	// if err != nil {
+	// 	logger.Errorw("error when writing title",
+	// 		zap.Error(err),
+	// 	)
+	// }
 
-		err := w.Write(record)
-		if err != nil {
-			logger.Errorw("error when writing the entry",
-				zap.String("function_name", lambdaDetails.Name),
-				zap.Error(err),
-			)
-		}
-	}
+	// for _, lambdaDetails := range lambdaFunctionsList {
+	// 	record := []string{
+	// 		lambdaDetails.Name,
+	// 		lambdaDetails.Arn,
+	// 		lambdaDetails.Description,
+	// 		lambdaDetails.LastModified,
+	// 		lambdaDetails.IamRole,
+	// 		lambdaDetails.Runtime,
+	// 		lambdaDetails.LastInvoked,
+	// 	}
 
-	logger.Infow("all the function details have been written to the output",
-		zap.String("file name", stg.outputFileName),
-		zap.Int("number of functions", len(lambdaFunctionsList)),
-	)
+	// 	err := w.Write(record)
+	// 	if err != nil {
+	// 		logger.Errorw("error when writing the entry",
+	// 			zap.String("function_name", lambdaDetails.Name),
+	// 			zap.Error(err),
+	// 		)
+	// 	}
+	// }
+
+	// logger.Infow("all the function details have been written to the output",
+	// 	zap.String("file name", stg.outputFileName),
+	// 	zap.Int("number of functions", len(lambdaFunctionsList)),
+	// )
 }
 
 func createLogger(debugMode bool) *zap.SugaredLogger {
