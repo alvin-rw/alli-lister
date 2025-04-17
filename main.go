@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -18,6 +19,7 @@ import (
 type settings struct {
 	debug          bool
 	awsProfileName string
+	getAllRegions  bool
 	outputFileName string
 	maxWorkers     int
 }
@@ -25,6 +27,7 @@ type settings struct {
 // application stores main program global dependencies
 type application struct {
 	logger       *zap.SugaredLogger
+	ec2Client    *ec2.Client
 	lambdaClient *lambda.Client
 	cwlogsClient *cloudwatchlogs.Client
 }
@@ -33,6 +36,7 @@ func main() {
 	var stg settings
 	flag.BoolVar(&stg.debug, "debug", false, "Debug mode. Shows debug logs")
 	flag.StringVar(&stg.awsProfileName, "aws-profile", "default", "AWS Profile Name")
+	flag.BoolVar(&stg.getAllRegions, "all-regions", false, "Whether to get data from all AWS Regions")
 	flag.StringVar(&stg.outputFileName, "out-name", "lambda-list.csv", "The name of the output file")
 	flag.IntVar(&stg.maxWorkers, "max-workers", 50, "Maximum number of workers")
 	flag.Parse()
@@ -51,6 +55,7 @@ func main() {
 
 	app := &application{
 		logger:       logger,
+		ec2Client:    ec2.NewFromConfig(cfg),
 		lambdaClient: lambda.NewFromConfig(cfg),
 		cwlogsClient: cloudwatchlogs.NewFromConfig(cfg),
 	}
