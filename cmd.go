@@ -94,9 +94,13 @@ func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList 
 		}
 
 		jobs <- currentJob
+	}
+
+	for range maxWorkers {
 		wg.Add(1)
 		go app.getLambdaFunctionLastInvokeTime(jobs, lambdaFunctionsList, wg)
 	}
+
 	close(jobs)
 }
 
