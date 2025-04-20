@@ -119,7 +119,7 @@ func (app *application) getLambdaFunctionLastInvokeTime(jobs <-chan job, lambdaF
 
 		// TODO: check concurrency logic and make sure that the describe is working as intended
 		// TODO: make sure that the region used is the same for describing lambda function and describing cloudwatch logs
-		for _, cwLogsClient := range app.cwlogsClients {
+		for _, cwLogsClient := range app.cwLogsClients {
 			out, err := cwLogsClient.DescribeLogStreams(context.Background(), input)
 			if err != nil {
 				var oe *smithy.OperationError

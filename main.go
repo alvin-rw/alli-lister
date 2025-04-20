@@ -32,7 +32,7 @@ type application struct {
 	logger        *zap.SugaredLogger
 	ec2Client     *ec2.Client
 	lambdaClients []*lambda.Client
-	cwlogsClients []*cloudwatchlogs.Client
+	cwLogsClients []*cloudwatchlogs.Client
 }
 
 func main() {
@@ -196,6 +196,8 @@ func initializeApplication(logger *zap.SugaredLogger, cfg aws.Config, getAllRegi
 		})
 		lambdaClients = append(lambdaClients, lambdaClient)
 
+		// TODO: we don't need to initialize cwlogs Client in all regions. Only the regions that have
+		// lambda functions in it
 		cwLogsClient := cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) {
 			o.Region = region
 		})
@@ -204,7 +206,7 @@ func initializeApplication(logger *zap.SugaredLogger, cfg aws.Config, getAllRegi
 	logger.Debug("service clients retrieved")
 
 	app.lambdaClients = lambdaClients
-	app.cwlogsClients = cwLogsClients
+	app.cwLogsClients = cwLogsClients
 
 	return app, nil
 }
