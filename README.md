@@ -7,12 +7,17 @@ You can download the compiled binaries from the release page. By default, it wil
 alli-lister
 ```
 
-If you want to use different profile, you can use `--aws-profile` argument
+If you want to use different profile, you can use `-aws-profile` argument
 ```shell
-alli-lister --aws-profile <your-profile-name>
+alli-lister -aws-profile <your-profile-name>
 ```
 
-To run it in debug mode for troubleshooting, set `--debug=true`
+By default, the lister will only list the Lambda Functions that's in your AWS CLI default region. To list all functions in your AWS account's all opted-in regions, use `-all-regions`
+```shell
+alli-lister -all-regions
+```
+
+To run it in debug mode for troubleshooting, set `-debug=true`
 ```shell
 alli-lister -debug=true
 ```
