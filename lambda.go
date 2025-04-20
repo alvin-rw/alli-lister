@@ -6,6 +6,7 @@ import "reflect"
 // `title` tag is the title of the column of the resulting CSV file
 type lambdaFunction struct {
 	Name         string `title:"Function Name"`
+	Region       string `title:"Region"`
 	Arn          string `title:"Function ARN"`
 	Description  string `title:"Function Description"`
 	LastModified string `title:"Last Modified"`

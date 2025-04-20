@@ -21,6 +21,7 @@ import (
 // and writes the result back to the Lambda function slice
 type job struct {
 	functionName string
+	region       string
 	index        int
 }
 
@@ -31,37 +32,44 @@ const (
 )
 
 // getAllLambdaFunctionsDetails returns slice containing the details of all
-// Lambda functions in the current region
+// Lambda functions in the region specified by regions parameter
 func (app *application) getAllLambdaFunctionsDetails() ([]lambdaFunction, error) {
-	app.logger.Info("getting function details for all lambda functions")
+	app.logger.Info("getting function details for lambda functions")
 
-	in := &lambda.ListFunctionsInput{}
 	var lambdaFunctionsList []lambdaFunction
+	in := &lambda.ListFunctionsInput{}
 
-	for {
-		out, err := app.lambdaClient.ListFunctions(context.Background(), in)
-		if err != nil {
-			return nil, err
-		}
+	for _, lambdaClient := range app.lambdaClients {
+		app.logger.Debugw("getting Lambda functions",
+			zap.String("current_region", lambdaClient.Options().Region),
+		)
 
-		for _, functionDetail := range out.Functions {
-			f := lambdaFunction{
-				Name:         *functionDetail.FunctionName,
-				Arn:          *functionDetail.FunctionArn,
-				Description:  *functionDetail.Description,
-				LastModified: *functionDetail.LastModified,
-				IamRole:      *functionDetail.Role,
-				Runtime:      string(functionDetail.Runtime),
+		for {
+			out, err := lambdaClient.ListFunctions(context.Background(), in)
+			if err != nil {
+				return nil, err
 			}
 
-			lambdaFunctionsList = append(lambdaFunctionsList, f)
-		}
+			for _, functionDetail := range out.Functions {
+				f := lambdaFunction{
+					Name:         *functionDetail.FunctionName,
+					Region:       lambdaClient.Options().Region,
+					Arn:          *functionDetail.FunctionArn,
+					Description:  *functionDetail.Description,
+					LastModified: *functionDetail.LastModified,
+					IamRole:      *functionDetail.Role,
+					Runtime:      string(functionDetail.Runtime),
+				}
 
-		if out.NextMarker != nil {
-			in.Marker = out.NextMarker
-			continue
-		} else {
-			break
+				lambdaFunctionsList = append(lambdaFunctionsList, f)
+			}
+
+			if out.NextMarker != nil {
+				in.Marker = out.NextMarker
+				continue
+			} else {
+				break
+			}
 		}
 	}
 
@@ -83,13 +91,18 @@ func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList 
 	for i, lambdaDetails := range lambdaFunctionsList {
 		currentJob := job{
 			functionName: lambdaDetails.Name,
+			region:       lambdaDetails.Region,
 			index:        i,
 		}
 
 		jobs <- currentJob
+	}
+
+	for range maxWorkers {
 		wg.Add(1)
 		go app.getLambdaFunctionLastInvokeTime(jobs, lambdaFunctionsList, wg)
 	}
+
 	close(jobs)
 }
 
@@ -99,8 +112,6 @@ func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList 
 // CloudWatch log group and log stream, the resulting last invocation timestamp is "-"
 func (app *application) getLambdaFunctionLastInvokeTime(jobs <-chan job, lambdaFunctionsList []lambdaFunction, wg *sync.WaitGroup) {
 	defer wg.Done()
-
-	time.Sleep(10 * time.Second)
 
 	for currentJob := range jobs {
 		logGroupName := fmt.Sprintf("%s%s", lambdaLogGroupPrefix, currentJob.functionName)
@@ -112,7 +123,14 @@ func (app *application) getLambdaFunctionLastInvokeTime(jobs <-chan job, lambdaF
 			OrderBy:      types.OrderByLastEventTime,
 		}
 
-		out, err := app.cwlogsClient.DescribeLogStreams(context.Background(), input)
+		// TODO: check concurrency logic and make sure that the describe is working as intended
+		// TODO: make sure that the region used is the same for describing lambda function and describing cloudwatch logs
+
+		cwLogsClient := cloudwatchlogs.NewFromConfig(*app.cfg, func(o *cloudwatchlogs.Options) {
+			o.Region = currentJob.region
+		})
+
+		out, err := cwLogsClient.DescribeLogStreams(context.Background(), input)
 		if err != nil {
 			var oe *smithy.OperationError
 			if errors.As(err, &oe) {

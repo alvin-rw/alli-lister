@@ -14,6 +14,11 @@ run:
 debug:
 	@go run . -debug=true
 
+## all-regions: run the application to get data from all regions
+.PHONY: all-regions
+all-regions:
+	@go run . -all-regions=true
+
 ## build: build the application for multiple platforms
 .PHONY: build
 build:
