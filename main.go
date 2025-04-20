@@ -11,7 +11,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"go.uber.org/zap"
@@ -30,9 +29,9 @@ type settings struct {
 // application stores main program global dependencies
 type application struct {
 	logger        *zap.SugaredLogger
+	cfg           *aws.Config
 	ec2Client     *ec2.Client
 	lambdaClients []*lambda.Client
-	cwLogsClients []*cloudwatchlogs.Client
 }
 
 func main() {
@@ -161,6 +160,7 @@ func initializeApplication(logger *zap.SugaredLogger, cfg aws.Config, getAllRegi
 
 	app := &application{
 		logger:    logger,
+		cfg:       &cfg,
 		ec2Client: ec2.NewFromConfig(cfg),
 	}
 
@@ -183,10 +183,9 @@ func initializeApplication(logger *zap.SugaredLogger, cfg aws.Config, getAllRegi
 		regions = append(regions, cfg.Region)
 	}
 
-	// lambdaClients and cwLogsClients will hold all the service clients from all chosen regions.
+	// lambdaClients will hold all the service clients from all chosen regions.
 	// This will be used to query the AWS Service
 	lambdaClients := []*lambda.Client{}
-	cwLogsClients := []*cloudwatchlogs.Client{}
 
 	logger.Debug("initializing service clients for chosen regions")
 	// Create AWS service clients for all chosen region and put it in the application struct
@@ -195,18 +194,10 @@ func initializeApplication(logger *zap.SugaredLogger, cfg aws.Config, getAllRegi
 			o.Region = region
 		})
 		lambdaClients = append(lambdaClients, lambdaClient)
-
-		// TODO: we don't need to initialize cwlogs Client in all regions. Only the regions that have
-		// lambda functions in it
-		cwLogsClient := cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) {
-			o.Region = region
-		})
-		cwLogsClients = append(cwLogsClients, cwLogsClient)
 	}
 	logger.Debug("service clients retrieved")
 
 	app.lambdaClients = lambdaClients
-	app.cwLogsClients = cwLogsClients
 
 	return app, nil
 }
