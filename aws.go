@@ -9,9 +9,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// getAllOptedInRegions retrieves all available
-// (opted-in and regions where opt-in is not required) region in the account
-func (app *application) getAllOptedInRegions() ([]string, error) {
+// getAllAvailableRegions retrieves all available
+// (opted-in and regions where opt-in is not required) regions in the account
+func (app *application) getAllAvailableRegions() ([]string, error) {
 	app.logger.Infow("all-regions options enabled, getting all available regions")
 
 	in := &ec2.DescribeRegionsInput{

@@ -170,7 +170,7 @@ func initializeApplication(logger *zap.SugaredLogger, cfg aws.Config, getAllRegi
 	// get regions list based on the chosen parameters
 	regions := []string{}
 	if getAllRegions {
-		allOptedInRegions, err := app.getAllOptedInRegions()
+		allOptedInRegions, err := app.getAllAvailableRegions()
 		if err != nil {
 			app.logger.Fatalf("error when listing all available regions",
 				zap.Error(err),
