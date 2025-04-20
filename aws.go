@@ -37,7 +37,7 @@ func (app *application) getAllOptedInRegions() ([]string, error) {
 	}
 
 	app.logger.Debugw("got all available regions in the account",
-		zap.Int("region_number", len(optedInRegionsList)),
+		zap.Int("region_count", len(optedInRegionsList)),
 	)
 
 	return optedInRegionsList, nil
