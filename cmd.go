@@ -88,22 +88,23 @@ func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList 
 	// by limiting the amount of jobs that can be stored in the channel
 	jobs := make(chan job, maxWorkers)
 
-	for i, lambdaDetails := range lambdaFunctionsList {
-		currentJob := job{
-			functionName: lambdaDetails.Name,
-			region:       lambdaDetails.Region,
-			index:        i,
-		}
+	go func() {
+		for i, lambdaDetails := range lambdaFunctionsList {
+			currentJob := job{
+				functionName: lambdaDetails.Name,
+				region:       lambdaDetails.Region,
+				index:        i,
+			}
 
-		jobs <- currentJob
-	}
+			jobs <- currentJob
+		}
+		close(jobs)
+	}()
 
 	for range maxWorkers {
 		wg.Add(1)
 		go app.getLambdaFunctionLastInvokeTime(jobs, lambdaFunctionsList, wg)
 	}
-
-	close(jobs)
 }
 
 // getLambdaFunctionLastInvokeTime queries CloudWatch logs to retrieve the latest log timestamp
