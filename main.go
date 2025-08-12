@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -40,7 +39,7 @@ func main() {
 	flag.StringVar(&stg.awsProfileName, "aws-profile", "default", "AWS Profile Name")
 	flag.BoolVar(&stg.getAllRegions, "all-regions", false, "Whether to get data from all AWS Regions")
 	flag.StringVar(&stg.outputFileName, "output-file-name", "", "The name of the output file. If not provided, the resulting file name will be [timestamp].csv")
-	flag.IntVar(&stg.maxWorkers, "max-workers", 50, "Maximum number of workers")
+	flag.IntVar(&stg.maxWorkers, "max-workers", 10, "Maximum number of workers")
 	flag.Parse()
 
 	logger := createLogger(stg.debug)
@@ -69,12 +68,10 @@ func main() {
 		)
 	}
 
-	wg := &sync.WaitGroup{}
-	app.getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList, wg, stg.maxWorkers)
-	wg.Wait()
+	jobs := app.generateLastInvokeTimeQueryJob(lambdaFunctionsList, stg.maxWorkers)
+	app.getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList, jobs, stg.maxWorkers)
 
 	fileName := getFileName(stg.outputFileName)
-
 	logger.Infof("writing the output to %q", fileName)
 	f, err := os.Create(fileName)
 	if err != nil {

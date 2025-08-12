@@ -80,13 +80,10 @@ func (app *application) getAllLambdaFunctionsDetails() ([]lambdaFunction, error)
 	return lambdaFunctionsList, nil
 }
 
-// getAllLambdaFunctionsLastInvokeTime wraps getLambdaFunctionLastInvokeTime and invoke them concurrently in the background.
-func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList []lambdaFunction, wg *sync.WaitGroup, maxWorkers int) {
-	app.logger.Info("getting last invoke time for all lambda functions")
-
-	// jobs channel is used to limit the number of workers goroutines
-	// by limiting the amount of jobs that can be stored in the channel
-	jobs := make(chan job, maxWorkers)
+// generateLastInvokeTimeQueryJob generates job channel. This channel will be consumed by
+// getLambdaFunctionLastInvokeTime function
+func (app *application) generateLastInvokeTimeQueryJob(lambdaFunctionsList []lambdaFunction, maxWorkers int) <-chan job {
+	jobs := make(chan job)
 
 	go func() {
 		for i, lambdaDetails := range lambdaFunctionsList {
@@ -101,10 +98,22 @@ func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList 
 		close(jobs)
 	}()
 
+	return jobs
+}
+
+// getAllLambdaFunctionsLastInvokeTime wraps getLambdaFunctionLastInvokeTime and invoke them concurrently in the background.
+func (app *application) getAllLambdaFunctionsLastInvokeTime(lambdaFunctionsList []lambdaFunction, jobs <-chan job, maxWorkers int) {
+	app.logger.Info("getting last invoke time for all lambda functions")
+
+	wg := &sync.WaitGroup{}
+
 	for range maxWorkers {
 		wg.Add(1)
 		go app.getLambdaFunctionLastInvokeTime(jobs, lambdaFunctionsList, wg)
 	}
+
+	wg.Wait()
+	app.logger.Info("got last invoke time for all lambda functions")
 }
 
 // getLambdaFunctionLastInvokeTime queries CloudWatch logs to retrieve the latest log timestamp
